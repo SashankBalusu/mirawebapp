@@ -33,7 +33,7 @@ html::before{
   left: 50%;
   top: 0;
   width: 200vw; 
-  height: 100dvh;
+  height: 110dvh;
   transform: translateX(-50%);
   z-index: -1;
   background: radial-gradient(50% 50% at 50% 50%,

@@ -6,12 +6,12 @@
   --header-xpad: clamp(16px, 5vw, 24px);
   --header-ypad: clamp(10px, 3vh, 16px);
   --icon-size: clamp(32px, 9vw, 44px);
-
+  --sa-top: env(safe-area-inset-top, 0px);
+  --sa-bottom: env(safe-area-inset-bottom, 0px);
   --ink-40: rgba(10,10,10,0.4);
   --ink-60: rgba(10,10,10,0.6);
   --bg: #ffffff;
 }
-
 html, body { margin: 0; height: 100%; background: transparent; }
 body {
   min-height: 100dvh;
@@ -20,21 +20,21 @@ body {
 html::before{
   content: "";
   position: fixed;
-  inset: 0;
-  width: 200vw;
-  height: 100svh;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  top: 0;
+  width: 200vw; 
+  height: calc(100svh + var(--sa-top) + var(--sa-bottom));
+  transform: translateX(-50%);
+  margin-top: calc(-1 * var(--sa-top)); 
+  z-index: -1;
   background: radial-gradient(50% 50% at 50% 50%,
     #FACF78 0%,
     #F7C490 33%,
     #F3C2AE 50%,
     #EFC9C9 66%,
     #E8EAFF 90%);
-  z-index: -1;
+  pointer-events: none;
 }
-
 .app-header{
   position: fixed;
   inset-block-start: 0;

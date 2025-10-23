@@ -33,7 +33,9 @@ export default async function handler(req, res) {
 
     const buf = Buffer.from(await r.arrayBuffer());
     res.setHeader('Content-Type', `audio/${format}`);
-    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return res.send(buf);
   } catch (e) {
     console.error('[api/tts] error:', e);

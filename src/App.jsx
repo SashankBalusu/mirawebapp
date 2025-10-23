@@ -277,9 +277,87 @@ function App() {
   const [talking, setTalking] = useState(false)
   const suppressNextClickRef = useRef(false)
   const currentAudioRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const unlockedRef = useRef(false);
-  const currentSourceRef = useRef(null);
+  // ---- WebAudio: resilient context management ----
+const audioCtxRef = useRef(null);
+const gainRef = useRef(null);
+const currentSrcRef = useRef(null);
+const unlockedRef = useRef(false);
+
+// (A) Create a brand-new context (used when iOS puts the device in a bad state)
+function createFreshContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try {
+    const ctx = new AC({ latencyHint: 'interactive' });
+    const gain = ctx.createGain();
+    gain.gain.value = 1.0;
+    gain.connect(ctx.destination);
+    audioCtxRef.current = ctx;
+    gainRef.current = gain;
+    return ctx;
+  } catch {
+    return null;
+  }
+}
+
+// (B) Get-or-create, but *don’t* resume yet
+function getAudioContext() {
+  return audioCtxRef.current || createFreshContext();
+}
+
+// (C) Play a 1-frame silent ping to “unlock” the output path
+async function playSilentPing(ctx) {
+  const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(gainRef.current);
+  src.start(0);
+  // no onended needed (it ends immediately)
+}
+
+// (D) Ensure the context is running; if iOS throws, recreate & unlock again
+async function ensureContextRunning() {
+  let ctx = getAudioContext();
+  if (!ctx) return null;
+
+  // Resume inside a gesture if possible; we still call it defensively each time
+  if (ctx.state !== 'running') {
+    try {
+      await ctx.resume();
+    } catch (e) {
+      // iOS sometimes throws InvalidStateError here; recreate from scratch
+      ctx = createFreshContext();
+    }
+  }
+
+  // Some iOS builds “resume” but output isn’t actually started; do a ping
+  try {
+    await playSilentPing(ctx);
+    unlockedRef.current = true;
+  } catch (e) {
+    // If the ping fails, try a full rebuild + ping again once
+    ctx = createFreshContext();
+    try {
+      await ctx.resume();
+      await playSilentPing(ctx);
+      unlockedRef.current = true;
+    } catch {
+      // Give up for now; caller can retry on next user gesture
+      return null;
+    }
+  }
+  return ctx;
+}
+
+// Stop and disconnect current source safely
+function stopCurrentSource() {
+  const s = currentSrcRef.current;
+  if (!s) return;
+  try { s.onended = null; s.stop(0); } catch {}
+  try { s.disconnect(); } catch {}
+  currentSrcRef.current = null;
+}
+;
   
   function getAudioContext() {
     if (!audioCtxRef.current) {
@@ -317,37 +395,62 @@ function App() {
 
   const speakOnce = (text, { voice = 'alloy' } = {}) =>
   new Promise(async (resolve) => {
-    const ctx = getAudioContext();
+    // 1) Make sure we have a running, unlocked context (handles InvalidStateError)
+    let ctx = await ensureContextRunning();
     if (!ctx) return resolve();
 
-    try {
-      const r = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice, format: 'mp3' }),
-      });
-      if (!r.ok) {
-        return resolve();
+    // 2) Try WAV first (iOS decode is most reliable), then MP3
+    const formats = ['wav', 'mp3'];
+    for (const fmt of formats) {
+      try {
+        const r = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice, format: fmt })
+        });
+        if (!r.ok) continue;
+
+        const ab = await r.arrayBuffer();
+        if (ab.byteLength < 64) continue; // guard tiny response
+
+        // Safari decode sometimes throws after sleep; recreate context and retry decode once
+        const tryDecode = async (arrayBuf) => {
+          try {
+            // defensive copy helps on older Safari
+            return await ctx.decodeAudioData(arrayBuf.slice(0));
+          } catch (e) {
+            // Rebuild context and try decode one more time
+            ctx = createFreshContext();
+            if (!ctx) throw e;
+            await ctx.resume().catch(() => {});
+            return await ctx.decodeAudioData(arrayBuf.slice(0));
+          }
+        };
+
+        const buffer = await tryDecode(ab);
+        stopCurrentSource();
+        const src = ctx.createBufferSource();
+        currentSrcRef.current = src;
+        src.buffer = buffer;
+        src.connect(gainRef.current);
+        src.onended = () => {
+          if (currentSrcRef.current === src) currentSrcRef.current = null;
+          resolve();
+        };
+
+        // Resume once more right before start (covers “works once then suspended”)
+        await ctx.resume().catch(() => {});
+        src.start(0);
+        return; // success
+      } catch {
+        // try next format
       }
-
-      const audioBytes = await r.arrayBuffer();
-      const buffer = await ctx.decodeAudioData(audioBytes);
-
-      if (cancelRef.current) return resolve();
-
-      const src = ctx.createBufferSource();
-      currentSourceRef.current = src;
-      src.buffer = buffer;
-      src.connect(ctx.destination);
-      src.onended = () => {
-        if (currentSourceRef.current === src) currentSourceRef.current = null;
-        resolve();
-      };
-      src.start(0);
-    } catch {
-      resolve();
     }
+
+    // 3) If both formats failed, resolve quietly (you can alert/log if you want)
+    resolve();
   });
+
 
     
 
@@ -355,11 +458,7 @@ function App() {
 
   const stopPlayback = () => {
     cancelRef.current = true;
-    // stop any current WebAudio source
-    if (currentSourceRef.current) {
-      try { currentSourceRef.current.stop(0); } catch {}
-      currentSourceRef.current = null;
-    }
+    stopCurrentSource();
     setTalking(false);
   };
   const closeMenuAndSuppressNextClick = () => {
@@ -394,21 +493,35 @@ function App() {
 
   useEffect(() => {
     const onClick = async () => {
-      if (menuOpen) return;
-      if (suppressNextClickRef.current) return;
-  
-      await unlockAudio();
-  
+      if (menuOpen || suppressNextClickRef.current) return;
+      await ensureContextRunning();   // <— NEW
+    
       if (talking || runningRef.current) {
         stopPlayback();
       } else {
         startPlayback();
       }
     };
+    
     document.addEventListener('click', onClick, { passive: true });
     return () => document.removeEventListener('click', onClick);
   }, [menuOpen, talking, items]);
-
+  useEffect(() => {
+    const onFirstPointer = async () => { await ensureContextRunning(); };
+    window.addEventListener('pointerdown', onFirstPointer, { once: true, passive: true });
+    return () => window.removeEventListener('pointerdown', onFirstPointer);
+  }, []);
+  
+  // When app returns to foreground, iOS may suspend audio; resume then
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.visibilityState === 'visible') {
+        await ensureContextRunning();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
   const stopPropagation = (e) => e.stopPropagation()
 
   return (

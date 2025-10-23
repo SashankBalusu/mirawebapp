@@ -82,6 +82,7 @@ function PulseRects({ active }) {
     </div>
   )
 }
+
 function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
   const [standalone, setStandalone] = useState(false);
   const [ctxState, setCtxState] = useState('unknown');
@@ -114,7 +115,6 @@ function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
     setLastError('');
     try {
       const a = new Audio(
-        // 50ms silent mp3; helps unlock HTMLMedia pipeline in some iOS versions
         'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQAA'
       );
       a.playsInline = true;
@@ -276,110 +276,87 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [talking, setTalking] = useState(false)
   const suppressNextClickRef = useRef(false)
-  const currentAudioRef = useRef(null);
+
   // ---- WebAudio: resilient context management ----
-const audioCtxRef = useRef(null);
-const gainRef = useRef(null);
-const currentSrcRef = useRef(null);
-const unlockedRef = useRef(false);
+  const audioCtxRef = useRef(null);
+  const gainRef = useRef(null);
+  const currentSrcRef = useRef(null);
+  const unlockedRef = useRef(false);
 
-// (A) Create a brand-new context (used when iOS puts the device in a bad state)
-function createFreshContext() {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  try {
-    const ctx = new AC({ latencyHint: 'interactive' });
-    const gain = ctx.createGain();
-    gain.gain.value = 1.0;
-    gain.connect(ctx.destination);
-    audioCtxRef.current = ctx;
-    gainRef.current = gain;
-    return ctx;
-  } catch {
-    return null;
-  }
-}
-
-// (B) Get-or-create, but *don’t* resume yet
-function getAudioContext() {
-  return audioCtxRef.current || createFreshContext();
-}
-
-// (C) Play a 1-frame silent ping to “unlock” the output path
-async function playSilentPing(ctx) {
-  const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(gainRef.current);
-  src.start(0);
-  // no onended needed (it ends immediately)
-}
-
-// (D) Ensure the context is running; if iOS throws, recreate & unlock again
-async function ensureContextRunning() {
-  let ctx = getAudioContext();
-  if (!ctx) return null;
-
-  // Resume inside a gesture if possible; we still call it defensively each time
-  if (ctx.state !== 'running') {
+  // (A) Create a brand-new context
+  function createFreshContext() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
     try {
-      await ctx.resume();
-    } catch (e) {
-      // iOS sometimes throws InvalidStateError here; recreate from scratch
-      ctx = createFreshContext();
-    }
-  }
-
-  // Some iOS builds “resume” but output isn’t actually started; do a ping
-  try {
-    await playSilentPing(ctx);
-    unlockedRef.current = true;
-  } catch (e) {
-    // If the ping fails, try a full rebuild + ping again once
-    ctx = createFreshContext();
-    try {
-      await ctx.resume();
-      await playSilentPing(ctx);
-      unlockedRef.current = true;
+      const ctx = new AC({ latencyHint: 'interactive' });
+      const gain = ctx.createGain();
+      gain.gain.value = 1.0;
+      gain.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+      gainRef.current = gain;
+      return ctx;
     } catch {
-      // Give up for now; caller can retry on next user gesture
       return null;
     }
   }
-  return ctx;
-}
 
-// Stop and disconnect current source safely
-function stopCurrentSource() {
-  const s = currentSrcRef.current;
-  if (!s) return;
-  try { s.onended = null; s.stop(0); } catch {}
-  try { s.disconnect(); } catch {}
-  currentSrcRef.current = null;
-}
-;
-  
+  // (B) Get-or-create
   function getAudioContext() {
-    if (!audioCtxRef.current) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      audioCtxRef.current = AC ? new AC() : null;
-    }
-    return audioCtxRef.current;
+    return audioCtxRef.current || createFreshContext();
   }
-  
-  async function unlockAudio() {
-    const ctx = getAudioContext();
-    if (!ctx || unlockedRef.current) return;
-    try {
-      await ctx.resume();
-      const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      src.start(0);
-      unlockedRef.current = true;
-    } catch {
+
+  // (C) Play a 1-frame silent ping to "unlock" the output path
+  async function playSilentPing(ctx) {
+    const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(gainRef.current);
+    src.start(0);
+  }
+
+  // (D) Ensure the context is running
+  async function ensureContextRunning() {
+    let ctx = getAudioContext();
+    if (!ctx) return null;
+
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.resume();
+      } catch (e) {
+        ctx = createFreshContext();
+        if (!ctx) return null;
+      }
     }
+
+    try {
+      await playSilentPing(ctx);
+      unlockedRef.current = true;
+    } catch (e) {
+      ctx = createFreshContext();
+      if (!ctx) return null;
+      try {
+        await ctx.resume();
+        await playSilentPing(ctx);
+        unlockedRef.current = true;
+      } catch {
+        return null;
+      }
+    }
+    return ctx;
+  }
+
+  // Stop and disconnect current source safely
+  function stopCurrentSource() {
+    const s = currentSrcRef.current;
+    if (!s) return;
+    try { s.onended = null; s.stop(0); } catch {}
+    try { s.disconnect(); } catch {}
+    currentSrcRef.current = null;
+  }
+
+  // Manual unlock for diagnostics
+  async function unlockAudio() {
+    await ensureContextRunning();
   }
 
   const [items, setItems] = useState(() => {
@@ -394,65 +371,55 @@ function stopCurrentSource() {
   const runningRef = useRef(false)
 
   const speakOnce = (text, { voice = 'alloy' } = {}) =>
-  new Promise(async (resolve) => {
-    // 1) Make sure we have a running, unlocked context (handles InvalidStateError)
-    let ctx = await ensureContextRunning();
-    if (!ctx) return resolve();
+    new Promise(async (resolve) => {
+      let ctx = await ensureContextRunning();
+      if (!ctx) return resolve();
 
-    // 2) Try WAV first (iOS decode is most reliable), then MP3
-    const formats = ['wav', 'mp3'];
-    for (const fmt of formats) {
-      try {
-        const r = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice, format: fmt })
-        });
-        if (!r.ok) continue;
+      const formats = ['wav', 'mp3'];
+      for (const fmt of formats) {
+        try {
+          const r = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice, format: fmt })
+          });
+          if (!r.ok) continue;
 
-        const ab = await r.arrayBuffer();
-        if (ab.byteLength < 64) continue; // guard tiny response
+          const ab = await r.arrayBuffer();
+          if (ab.byteLength < 64) continue;
 
-        // Safari decode sometimes throws after sleep; recreate context and retry decode once
-        const tryDecode = async (arrayBuf) => {
-          try {
-            // defensive copy helps on older Safari
-            return await ctx.decodeAudioData(arrayBuf.slice(0));
-          } catch (e) {
-            // Rebuild context and try decode one more time
-            ctx = createFreshContext();
-            if (!ctx) throw e;
-            await ctx.resume().catch(() => {});
-            return await ctx.decodeAudioData(arrayBuf.slice(0));
-          }
-        };
+          const tryDecode = async (arrayBuf) => {
+            try {
+              return await ctx.decodeAudioData(arrayBuf.slice(0));
+            } catch (e) {
+              ctx = createFreshContext();
+              if (!ctx) throw e;
+              await ctx.resume().catch(() => {});
+              return await ctx.decodeAudioData(arrayBuf.slice(0));
+            }
+          };
 
-        const buffer = await tryDecode(ab);
-        stopCurrentSource();
-        const src = ctx.createBufferSource();
-        currentSrcRef.current = src;
-        src.buffer = buffer;
-        src.connect(gainRef.current);
-        src.onended = () => {
-          if (currentSrcRef.current === src) currentSrcRef.current = null;
-          resolve();
-        };
+          const buffer = await tryDecode(ab);
+          stopCurrentSource();
+          const src = ctx.createBufferSource();
+          currentSrcRef.current = src;
+          src.buffer = buffer;
+          src.connect(gainRef.current);
+          src.onended = () => {
+            if (currentSrcRef.current === src) currentSrcRef.current = null;
+            resolve();
+          };
 
-        // Resume once more right before start (covers “works once then suspended”)
-        await ctx.resume().catch(() => {});
-        src.start(0);
-        return; // success
-      } catch {
-        // try next format
+          await ctx.resume().catch(() => {});
+          src.start(0);
+          return;
+        } catch {
+          // try next format
+        }
       }
-    }
 
-    // 3) If both formats failed, resolve quietly (you can alert/log if you want)
-    resolve();
-  });
-
-
-    
+      resolve();
+    });
 
   const delayMs = (ms) => new Promise(r => setTimeout(r, ms))
 
@@ -461,6 +428,7 @@ function stopCurrentSource() {
     stopCurrentSource();
     setTalking(false);
   };
+
   const closeMenuAndSuppressNextClick = () => {
     setMenuOpen(false)
     suppressNextClickRef.current = true
@@ -494,7 +462,7 @@ function stopCurrentSource() {
   useEffect(() => {
     const onClick = async () => {
       if (menuOpen || suppressNextClickRef.current) return;
-      await ensureContextRunning();   // <— NEW
+      await ensureContextRunning();
     
       if (talking || runningRef.current) {
         stopPlayback();
@@ -506,13 +474,13 @@ function stopCurrentSource() {
     document.addEventListener('click', onClick, { passive: true });
     return () => document.removeEventListener('click', onClick);
   }, [menuOpen, talking, items]);
+
   useEffect(() => {
     const onFirstPointer = async () => { await ensureContextRunning(); };
     window.addEventListener('pointerdown', onFirstPointer, { once: true, passive: true });
     return () => window.removeEventListener('pointerdown', onFirstPointer);
   }, []);
   
-  // When app returns to foreground, iOS may suspend audio; resume then
   useEffect(() => {
     const onVis = async () => {
       if (document.visibilityState === 'visible') {
@@ -522,6 +490,7 @@ function stopCurrentSource() {
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
+
   const stopPropagation = (e) => e.stopPropagation()
 
   return (
@@ -563,11 +532,13 @@ function stopCurrentSource() {
       </div>
 
       {!talking && <div className="tap-to-talk">tap to talk</div>}
+      
       <Diagnostics
         getAudioContext={getAudioContext}
         unlockAudio={unlockAudio}
         speakOnce={speakOnce}
       />
+      
       <MenuSheet
         open={menuOpen}
         onClose={closeMenuAndSuppressNextClick} 

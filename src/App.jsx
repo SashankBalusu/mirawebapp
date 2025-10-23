@@ -96,7 +96,7 @@ function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
     setStandalone(!!isStandalone);
 
     const ctx = getAudioContext();
-    if (ctx) setCtxState(ctx.state || 'none');
+    if (ctx) setCtxState(ctx?.state || 'none');
   }, []);
 
   const handleUnlock = async () => {
@@ -277,13 +277,21 @@ function App() {
   const [talking, setTalking] = useState(false)
   const suppressNextClickRef = useRef(false)
 
-  // ---- WebAudio: resilient context management ----
+  // Detect if we're in standalone PWA mode
+  const isStandalone = useRef(
+    window.navigator.standalone ||
+    window.matchMedia('(display-mode: standalone)').matches
+  );
+
+  // ---- WebAudio context management ----
   const audioCtxRef = useRef(null);
   const gainRef = useRef(null);
   const currentSrcRef = useRef(null);
-  const unlockedRef = useRef(false);
+  
+  // ---- HTML Audio pool for iOS PWA ----
+  const audioPoolRef = useRef([]);
+  const currentAudioRef = useRef(null);
 
-  // (A) Create a brand-new context
   function createFreshContext() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
@@ -300,63 +308,74 @@ function App() {
     }
   }
 
-  // (B) Get-or-create
   function getAudioContext() {
     return audioCtxRef.current || createFreshContext();
   }
 
-  // (C) Play a 1-frame silent ping to "unlock" the output path
-  async function playSilentPing(ctx) {
-    const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(gainRef.current);
-    src.start(0);
-  }
-
-  // (D) Ensure the context is running
-  async function ensureContextRunning() {
-    let ctx = getAudioContext();
-    if (!ctx) return null;
-
-    if (ctx.state !== 'running') {
-      try {
-        await ctx.resume();
-      } catch (e) {
-        ctx = createFreshContext();
-        if (!ctx) return null;
+  // Initialize HTML Audio pool for PWA
+  function initAudioPool() {
+    if (audioPoolRef.current.length === 0) {
+      for (let i = 0; i < 3; i++) {
+        const audio = new Audio();
+        audio.preload = 'auto';
+        audio.playsInline = true;
+        audioPoolRef.current.push(audio);
       }
     }
+  }
 
+  function getAvailableAudio() {
+    initAudioPool();
+    return audioPoolRef.current.find(a => a.paused) || audioPoolRef.current[0];
+  }
+
+  async function unlockAudioSystem() {
+    // Unlock HTML Audio (critical for iOS PWA)
     try {
-      await playSilentPing(ctx);
-      unlockedRef.current = true;
-    } catch (e) {
-      ctx = createFreshContext();
-      if (!ctx) return null;
+      const a = new Audio('data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQAA');
+      a.playsInline = true;
+      await a.play();
+      a.pause();
+    } catch {}
+
+    // Unlock WebAudio
+    const ctx = getAudioContext();
+    if (ctx) {
       try {
         await ctx.resume();
-        await playSilentPing(ctx);
-        unlockedRef.current = true;
-      } catch {
-        return null;
-      }
+        const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch {}
     }
-    return ctx;
   }
 
-  // Stop and disconnect current source safely
+  async function unlockAudio() {
+    await unlockAudioSystem();
+  }
+
   function stopCurrentSource() {
     const s = currentSrcRef.current;
-    if (!s) return;
-    try { s.onended = null; s.stop(0); } catch {}
-    try { s.disconnect(); } catch {}
-    currentSrcRef.current = null;
+    if (s) {
+      try { s.onended = null; s.stop(0); } catch {}
+      try { s.disconnect(); } catch {}
+      currentSrcRef.current = null;
+    }
   }
 
-  // Manual unlock for diagnostics
-  async function unlockAudio() {
-    await ensureContextRunning();
+  function stopCurrentAudio() {
+    const a = currentAudioRef.current;
+    if (a) {
+      try {
+        a.pause();
+        a.currentTime = 0;
+        a.onended = null;
+        a.onerror = null;
+      } catch {}
+      currentAudioRef.current = null;
+    }
   }
 
   const [items, setItems] = useState(() => {
@@ -370,55 +389,119 @@ function App() {
   const cancelRef = useRef(false)
   const runningRef = useRef(false)
 
+  // Use HTML Audio for iOS PWA, WebAudio for browser
   const speakOnce = (text, { voice = 'alloy' } = {}) =>
     new Promise(async (resolve) => {
-      let ctx = await ensureContextRunning();
-      if (!ctx) return resolve();
-
-      const formats = ['wav', 'mp3'];
-      for (const fmt of formats) {
+      // In standalone PWA mode, prefer HTML Audio (more reliable on iOS)
+      if (isStandalone.current) {
         try {
-          const r = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, voice, format: fmt })
-          });
-          if (!r.ok) continue;
-
-          const ab = await r.arrayBuffer();
-          if (ab.byteLength < 64) continue;
-
-          const tryDecode = async (arrayBuf) => {
+          const formats = ['mp3', 'wav'];
+          for (const fmt of formats) {
             try {
-              return await ctx.decodeAudioData(arrayBuf.slice(0));
-            } catch (e) {
-              ctx = createFreshContext();
-              if (!ctx) throw e;
-              await ctx.resume().catch(() => {});
-              return await ctx.decodeAudioData(arrayBuf.slice(0));
+              const r = await fetch('/api/tts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, voice, format: fmt })
+              });
+              
+              if (!r.ok) continue;
+              
+              const blob = await r.blob();
+              if (blob.size < 100) continue;
+              
+              const url = URL.createObjectURL(blob);
+              const audio = getAvailableAudio();
+              currentAudioRef.current = audio;
+              
+              audio.src = url;
+              
+              const cleanup = () => {
+                URL.revokeObjectURL(url);
+                if (currentAudioRef.current === audio) {
+                  currentAudioRef.current = null;
+                }
+              };
+              
+              audio.onended = () => {
+                cleanup();
+                resolve();
+              };
+              
+              audio.onerror = () => {
+                cleanup();
+                resolve();
+              };
+              
+              try {
+                await audio.play();
+                return; // Success
+              } catch (e) {
+                cleanup();
+                continue; // Try next format
+              }
+            } catch {
+              continue;
             }
-          };
-
-          const buffer = await tryDecode(ab);
-          stopCurrentSource();
-          const src = ctx.createBufferSource();
-          currentSrcRef.current = src;
-          src.buffer = buffer;
-          src.connect(gainRef.current);
-          src.onended = () => {
-            if (currentSrcRef.current === src) currentSrcRef.current = null;
-            resolve();
-          };
-
-          await ctx.resume().catch(() => {});
-          src.start(0);
-          return;
+          }
+          resolve(); // All formats failed
         } catch {
-          // try next format
+          resolve();
         }
-      }
+      } else {
+        // Browser mode: use WebAudio
+        let ctx = getAudioContext();
+        if (!ctx) return resolve();
 
-      resolve();
+        try {
+          await ctx.resume();
+        } catch {}
+
+        const formats = ['wav', 'mp3'];
+        for (const fmt of formats) {
+          try {
+            const r = await fetch('/api/tts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text, voice, format: fmt })
+            });
+            
+            if (!r.ok) continue;
+
+            const ab = await r.arrayBuffer();
+            if (ab.byteLength < 64) continue;
+
+            const tryDecode = async (arrayBuf) => {
+              try {
+                return await ctx.decodeAudioData(arrayBuf.slice(0));
+              } catch (e) {
+                ctx = createFreshContext();
+                if (!ctx) throw e;
+                await ctx.resume().catch(() => {});
+                return await ctx.decodeAudioData(arrayBuf.slice(0));
+              }
+            };
+
+            const buffer = await tryDecode(ab);
+            stopCurrentSource();
+            
+            const src = ctx.createBufferSource();
+            currentSrcRef.current = src;
+            src.buffer = buffer;
+            src.connect(gainRef.current);
+            src.onended = () => {
+              if (currentSrcRef.current === src) currentSrcRef.current = null;
+              resolve();
+            };
+
+            await ctx.resume().catch(() => {});
+            src.start(0);
+            return;
+          } catch {
+            continue;
+          }
+        }
+        resolve();
+      }
     });
 
   const delayMs = (ms) => new Promise(r => setTimeout(r, ms))
@@ -426,6 +509,7 @@ function App() {
   const stopPlayback = () => {
     cancelRef.current = true;
     stopCurrentSource();
+    stopCurrentAudio();
     setTalking(false);
   };
 
@@ -462,7 +546,7 @@ function App() {
   useEffect(() => {
     const onClick = async () => {
       if (menuOpen || suppressNextClickRef.current) return;
-      await ensureContextRunning();
+      await unlockAudioSystem();
     
       if (talking || runningRef.current) {
         stopPlayback();
@@ -475,20 +559,41 @@ function App() {
     return () => document.removeEventListener('click', onClick);
   }, [menuOpen, talking, items]);
 
+  // Aggressive unlock on first interaction
   useEffect(() => {
-    const onFirstPointer = async () => { await ensureContextRunning(); };
-    window.addEventListener('pointerdown', onFirstPointer, { once: true, passive: true });
-    return () => window.removeEventListener('pointerdown', onFirstPointer);
+    const unlock = async () => {
+      await unlockAudioSystem();
+      initAudioPool();
+    };
+    
+    const events = ['pointerdown', 'touchstart', 'click'];
+    events.forEach(evt => {
+      window.addEventListener(evt, unlock, { once: true, passive: true });
+    });
+    
+    return () => {
+      events.forEach(evt => window.removeEventListener(evt, unlock));
+    };
   }, []);
   
+  // Re-unlock when returning to app
   useEffect(() => {
     const onVis = async () => {
       if (document.visibilityState === 'visible') {
-        await ensureContextRunning();
+        await unlockAudioSystem();
       }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  // Re-unlock on focus (iOS PWA)
+  useEffect(() => {
+    const onFocus = async () => {
+      await unlockAudioSystem();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   const stopPropagation = (e) => e.stopPropagation()

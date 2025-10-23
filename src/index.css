@@ -12,20 +12,26 @@
   --bg: #ffffff;
 }
 
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; background: transparent; }
 body {
   min-height: 100dvh;
   overflow: hidden;
 }
-body::before {
+html::before{
   content: "";
   position: fixed;
-  top: 50%;
-  left: 50%;
+  inset: 0;
   width: 200vw;
-  height: 100vh;
+  height: 100svh;
+  left: 50%;
+  top: 50%;
   transform: translate(-50%, -50%);
-  background: radial-gradient(50% 50% at 50% 50%, #FACF78 0%, #F7C490 33%, #F3C2AE 50%, #EFC9C9 66%, #E8EAFF 90%);
+  background: radial-gradient(50% 50% at 50% 50%,
+    #FACF78 0%,
+    #F7C490 33%,
+    #F3C2AE 50%,
+    #EFC9C9 66%,
+    #E8EAFF 90%);
   z-index: -1;
 }
 
@@ -42,6 +48,8 @@ body::before {
   padding-block-start: max(env(safe-area-inset-top), 12px);
   padding-block-end: var(--header-ypad);
   padding-inline: var(--header-xpad);
+  padding-top: max(env(safe-area-inset-top), 12px);
+
   background: transparent;
 }
 
@@ -106,6 +114,7 @@ body::before {
   text-align: center;
   user-select: none;
   pointer-events: none;
+  bottom: calc(72px + env(safe-area-inset-bottom));
 }
 
 .sheet-backdrop{

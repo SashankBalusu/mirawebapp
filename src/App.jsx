@@ -638,12 +638,6 @@ function App() {
 
       {!talking && <div className="tap-to-talk">tap to talk</div>}
       
-      <Diagnostics
-        getAudioContext={getAudioContext}
-        unlockAudio={unlockAudio}
-        speakOnce={speakOnce}
-      />
-      
       <MenuSheet
         open={menuOpen}
         onClose={closeMenuAndSuppressNextClick} 

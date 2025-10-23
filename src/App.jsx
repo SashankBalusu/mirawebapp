@@ -82,6 +82,103 @@ function PulseRects({ active }) {
     </div>
   )
 }
+function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
+  const [standalone, setStandalone] = useState(false);
+  const [ctxState, setCtxState] = useState('unknown');
+  const [unlocked, setUnlocked] = useState(false);
+  const [lastError, setLastError] = useState('');
+
+  useEffect(() => {
+    const isStandalone =
+      window.navigator.standalone ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    setStandalone(!!isStandalone);
+
+    const ctx = getAudioContext();
+    if (ctx) setCtxState(ctx.state || 'none');
+  }, []);
+
+  const handleUnlock = async () => {
+    setLastError('');
+    try {
+      await unlockAudio();
+      const ctx = getAudioContext();
+      setCtxState(ctx?.state || 'none');
+      setUnlocked(true);
+    } catch (e) {
+      setLastError(String(e));
+    }
+  };
+
+  const testHtmlAudio = async () => {
+    setLastError('');
+    try {
+      const a = new Audio(
+        // 50ms silent mp3; helps unlock HTMLMedia pipeline in some iOS versions
+        'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQAA'
+      );
+      a.playsInline = true;
+      await a.play();
+    } catch (e) {
+      setLastError('HTML5 audio failed: ' + e);
+    }
+  };
+
+  const testWebAudioTone = async () => {
+    setLastError('');
+    try {
+      const ctx = getAudioContext();
+      await ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.05;
+      osc.frequency.value = 440;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      setTimeout(() => osc.stop(), 200);
+    } catch (e) {
+      setLastError('WebAudio tone failed: ' + e);
+    }
+  };
+
+  const testTTS = async () => {
+    setLastError('');
+    try {
+      await speakOnce('Testing voice from Mira', { voice: 'alloy' });
+    } catch (e) {
+      setLastError('TTS failed: ' + e);
+    }
+  };
+
+  const box = {
+    position: 'fixed', left: 8, right: 8, bottom: 8,
+    padding: '10px 12px', borderRadius: 12,
+    background: 'rgba(255,255,255,.8)', backdropFilter: 'blur(6px)',
+    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+    fontSize: 12, zIndex: 9999
+  };
+
+  const btn = {
+    padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(0,0,0,.1)',
+    background: '#fff', cursor: 'pointer', fontSize: 12
+  };
+
+  return (
+    <div style={box} onClick={e => e.stopPropagation()}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <strong>Diag:</strong>
+        <span>standalone: {String(standalone)}</span>
+        <span>ctx: {ctxState}</span>
+        <span>unlocked: {String(unlocked)}</span>
+        <button style={btn} onClick={handleUnlock}>Unlock</button>
+        <button style={btn} onClick={testHtmlAudio}>HTML5 ping</button>
+        <button style={btn} onClick={testWebAudioTone}>WebAudio ping</button>
+        <button style={btn} onClick={testTTS}>TTS test</button>
+      </div>
+      {lastError && <div style={{ marginTop: 6, color: '#b00020' }}>{lastError}</div>}
+    </div>
+  );
+}
 
 function MenuSheet({ open, onClose, items, setItems }) {
   const sheetRef = useRef(null)
@@ -353,7 +450,11 @@ function App() {
       </div>
 
       {!talking && <div className="tap-to-talk">tap to talk</div>}
-
+      <Diagnostics
+        getAudioContext={getAudioContext}
+        unlockAudio={unlockAudio}
+        speakOnce={speakOnce}
+      />
       <MenuSheet
         open={menuOpen}
         onClose={closeMenuAndSuppressNextClick} 

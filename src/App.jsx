@@ -180,7 +180,32 @@ function App() {
   const [talking, setTalking] = useState(false)
   const suppressNextClickRef = useRef(false)
   const currentAudioRef = useRef(null);
-
+  const audioCtxRef = useRef(null);
+  const unlockedRef = useRef(false);
+  const currentSourceRef = useRef(null);
+  
+  function getAudioContext() {
+    if (!audioCtxRef.current) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtxRef.current = AC ? new AC() : null;
+    }
+    return audioCtxRef.current;
+  }
+  
+  async function unlockAudio() {
+    const ctx = getAudioContext();
+    if (!ctx || unlockedRef.current) return;
+    try {
+      await ctx.resume();
+      const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+      unlockedRef.current = true;
+    } catch {
+    }
+  }
 
   const [items, setItems] = useState(() => {
     const saved = localStorage.getItem('scriptItems')
@@ -195,43 +220,34 @@ function App() {
 
   const speakOnce = (text, { voice = 'alloy' } = {}) =>
   new Promise(async (resolve) => {
-    try {
-      if (currentAudioRef.current) {
-        currentAudioRef.current.pause();
-        currentAudioRef.current.src = '';
-        currentAudioRef.current = null;
-      }
+    const ctx = getAudioContext();
+    if (!ctx) return resolve();
 
+    try {
       const r = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice, format: 'mp3' })
+        body: JSON.stringify({ text, voice, format: 'mp3' }),
       });
-
       if (!r.ok) {
-        console.warn('TTS failed:', await r.text());
         return resolve();
       }
 
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      currentAudioRef.current = audio;
+      const audioBytes = await r.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(audioBytes);
 
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        if (currentAudioRef.current === audio) currentAudioRef.current = null;
+      if (cancelRef.current) return resolve();
+
+      const src = ctx.createBufferSource();
+      currentSourceRef.current = src;
+      src.buffer = buffer;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        if (currentSourceRef.current === src) currentSourceRef.current = null;
         resolve();
       };
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        if (currentAudioRef.current === audio) currentAudioRef.current = null;
-        resolve();
-      };
-
-      audio.play().catch(() => resolve());
-    } catch (e) {
-      console.warn(e);
+      src.start(0);
+    } catch {
       resolve();
     }
   });
@@ -242,10 +258,10 @@ function App() {
 
   const stopPlayback = () => {
     cancelRef.current = true;
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.src = '';
-      currentAudioRef.current = null;
+    // stop any current WebAudio source
+    if (currentSourceRef.current) {
+      try { currentSourceRef.current.stop(0); } catch {}
+      currentSourceRef.current = null;
     }
     setTalking(false);
   };
@@ -280,19 +296,21 @@ function App() {
   }
 
   useEffect(() => {
-    const onClick = () => {
-      if (menuOpen) return
-      if (suppressNextClickRef.current) return
+    const onClick = async () => {
+      if (menuOpen) return;
+      if (suppressNextClickRef.current) return;
+  
+      await unlockAudio();
   
       if (talking || runningRef.current) {
-        stopPlayback()
+        stopPlayback();
       } else {
-        startPlayback()
+        startPlayback();
       }
-    }
-    document.addEventListener('click', onClick, { passive: true })
-    return () => document.removeEventListener('click', onClick)
-  }, [menuOpen, talking, items])
+    };
+    document.addEventListener('click', onClick, { passive: true });
+    return () => document.removeEventListener('click', onClick);
+  }, [menuOpen, talking, items]);
 
   const stopPropagation = (e) => e.stopPropagation()
 

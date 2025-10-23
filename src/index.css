@@ -17,40 +17,25 @@ html, body {
   margin: 0; 
   padding: 0;
   height: 100%; 
+  width: 100%;
   background: transparent;
   overflow: hidden;
+  position: relative;
 }
 
 body {
   min-height: 100dvh;
-  position: relative;
 }
 
 html::before{
   content: "";
   position: fixed;
-  left: 0;
+  left: 50%;
   top: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw; 
+  width: 200vw; 
   height: 100vh;
   min-height: 100dvh;
-  z-index: -1;
-  background: radial-gradient(50% 50% at 50% 50%,
-    #FACF78 0%,
-    #F7C490 33%,
-    #F3C2AE 50%,
-    #EFC9C9 66%,
-    #E8EAFF 90%);
-  pointer-events: none;
-}
-
-/* Alternative: if the above doesn't work, try body::before instead */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
+  transform: translateX(-50%);
   z-index: -1;
   background: radial-gradient(50% 50% at 50% 50%,
     #FACF78 0%,

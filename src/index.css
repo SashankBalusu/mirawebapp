@@ -27,13 +27,13 @@ body {
   min-height: 100dvh;
 }
 
-html::before{
+html::before {
   content: "";
   position: fixed;
   left: 50%;
   top: 0;
+  bottom: 0;
   width: 200vw; 
-  height: 110dvh;
   transform: translateX(-50%);
   z-index: -1;
   background: radial-gradient(50% 50% at 50% 50%,
@@ -42,6 +42,9 @@ html::before{
     #F3C2AE 50%,
     #EFC9C9 66%,
     #E8EAFF 90%);
+    background-size: cover;
+    background-position: center;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   pointer-events: none;
 }
 

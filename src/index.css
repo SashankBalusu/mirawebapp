@@ -37,7 +37,7 @@ html::before {
   transform: translateX(-50%);
   z-index: -1;
   background: radial-gradient(
-      50% 50% at 50% 50%,
+      80% 60% at 50% 50%,
       #FACF78 0%,
       #F7C490 25%,
       #F3C2AE 40%,

@@ -45,6 +45,7 @@ html::before {
       #E8EAFF 80%,
       #E8EAFF 100%
     );
+    background-color: #E8EAFF;
   pointer-events: none;
 }
 

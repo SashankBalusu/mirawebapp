@@ -226,8 +226,10 @@ function MenuSheet({ open, onClose, items, setItems }) {
         </div>
 
         <div className="sheet-body">
-          {items.length === 0 && (
-            <div className="empty-hint">Add steps below. Each step speaks your text, then waits the delay.</div>
+        {items.length === 0 && (
+            <div className="empty-hint">
+              Add steps below. Each step <strong>waits the delay</strong>, then speaks your text.
+            </div>
           )}
 
           <div className="rows">
@@ -235,17 +237,9 @@ function MenuSheet({ open, onClose, items, setItems }) {
               <div key={it.id} className="row">
                 <div className="row-index">{idx + 1}</div>
                 <div className="row-fields">
-                  <label className="field">
-                    <div className="field-label">text</div>
-                    <textarea
-                      value={it.text}
-                      onChange={e => updateItem(it.id, { text: e.target.value })}
-                      placeholder="What should Mira say?"
-                      rows={2}
-                    />
-                  </label>
+                  {/* Delay FIRST */}
                   <label className="field field-delay">
-                    <div className="field-label">delay (s)</div>
+                    <div className="field-label">delay before (s)</div>
                     <input
                       type="number"
                       inputMode="numeric"
@@ -253,6 +247,17 @@ function MenuSheet({ open, onClose, items, setItems }) {
                       step="0.1"
                       value={it.delay}
                       onChange={e => updateItem(it.id, { delay: Number(e.target.value) })}
+                    />
+                  </label>
+
+                  {/* Text SECOND */}
+                  <label className="field">
+                    <div className="field-label">text</div>
+                    <textarea
+                      value={it.text}
+                      onChange={e => updateItem(it.id, { text: e.target.value })}
+                      placeholder="What should Mira say?"
+                      rows={2}
                     />
                   </label>
                 </div>
@@ -265,7 +270,9 @@ function MenuSheet({ open, onClose, items, setItems }) {
             <button className="btn add" onClick={addItem}>＋ Add step</button>
           </div>
 
-          <div className="sheet-footer-hint">Tap anywhere on the main page to start/stop playback.</div>
+          <div className="sheet-footer-hint">
+            Tap anywhere on the main page to start/stop playback.
+          </div>
         </div>
       </aside>
     </>
@@ -390,119 +397,124 @@ function App() {
   const runningRef = useRef(false)
 
   // Use HTML Audio for iOS PWA, WebAudio for browser
-  const speakOnce = (text, { voice = 'alloy' } = {}) =>
-    new Promise(async (resolve) => {
-      // In standalone PWA mode, prefer HTML Audio (more reliable on iOS)
-      if (isStandalone.current) {
+  // Use HTML Audio for iOS PWA, WebAudio for browser
+const speakOnce = (text, { voice = 'alloy', onstart } = {}) =>
+new Promise(async (resolve) => {
+  let started = false;
+  const markStarted = () => {
+    if (!started) {
+      started = true;
+      try { onstart?.(); } catch {}
+    }
+  };
+
+  if (isStandalone.current) {
+    // --- Standalone PWA: HTMLAudio path ---
+    try {
+      const formats = ['mp3', 'wav'];
+      for (const fmt of formats) {
         try {
-          const formats = ['mp3', 'wav'];
-          for (const fmt of formats) {
-            try {
-              const r = await fetch('/api/tts', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, voice, format: fmt })
-              });
-              
-              if (!r.ok) continue;
-              
-              const blob = await r.blob();
-              if (blob.size < 100) continue;
-              
-              const url = URL.createObjectURL(blob);
-              const audio = getAvailableAudio();
-              currentAudioRef.current = audio;
-              
-              audio.src = url;
-              
-              const cleanup = () => {
-                URL.revokeObjectURL(url);
-                if (currentAudioRef.current === audio) {
-                  currentAudioRef.current = null;
-                }
-              };
-              
-              audio.onended = () => {
-                cleanup();
-                resolve();
-              };
-              
-              audio.onerror = () => {
-                cleanup();
-                resolve();
-              };
-              
-              try {
-                await audio.play();
-                return; // Success
-              } catch (e) {
-                cleanup();
-                continue; // Try next format
-              }
-            } catch {
-              continue;
+          const r = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, voice, format: fmt })
+          });
+          if (!r.ok) continue;
+
+          const blob = await r.blob();
+          if (blob.size < 100) continue;
+
+          const url = URL.createObjectURL(blob);
+          const audio = getAvailableAudio();
+          currentAudioRef.current = audio;
+
+          audio.src = url;
+
+          const cleanup = () => {
+            URL.revokeObjectURL(url);
+            if (currentAudioRef.current === audio) {
+              currentAudioRef.current = null;
             }
-          }
-          resolve(); // All formats failed
-        } catch {
-          resolve();
-        }
-      } else {
-        // Browser mode: use WebAudio
-        let ctx = getAudioContext();
-        if (!ctx) return resolve();
+            audio.onended = null;
+            audio.onerror = null;
+            audio.onplay = null;
+          };
 
-        try {
-          await ctx.resume();
-        } catch {}
+          audio.onplay = () => markStarted();
+          audio.onended = () => { cleanup(); resolve(); };
+          audio.onerror = () => { cleanup(); resolve(); };
 
-        const formats = ['wav', 'mp3'];
-        for (const fmt of formats) {
           try {
-            const r = await fetch('/api/tts', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text, voice, format: fmt })
-            });
-            
-            if (!r.ok) continue;
-
-            const ab = await r.arrayBuffer();
-            if (ab.byteLength < 64) continue;
-
-            const tryDecode = async (arrayBuf) => {
-              try {
-                return await ctx.decodeAudioData(arrayBuf.slice(0));
-              } catch (e) {
-                ctx = createFreshContext();
-                if (!ctx) throw e;
-                await ctx.resume().catch(() => {});
-                return await ctx.decodeAudioData(arrayBuf.slice(0));
-              }
-            };
-
-            const buffer = await tryDecode(ab);
-            stopCurrentSource();
-            
-            const src = ctx.createBufferSource();
-            currentSrcRef.current = src;
-            src.buffer = buffer;
-            src.connect(gainRef.current);
-            src.onended = () => {
-              if (currentSrcRef.current === src) currentSrcRef.current = null;
-              resolve();
-            };
-
-            await ctx.resume().catch(() => {});
-            src.start(0);
-            return;
+            await audio.play();   // onplay will fire when it actually starts
+            return;               // success path handled via events
           } catch {
+            // try next format
+            cleanup();
             continue;
           }
+        } catch {
+          continue;
         }
-        resolve();
       }
-    });
+      resolve(); // all formats failed
+    } catch {
+      resolve();
+    }
+  } else {
+    // --- Browser: WebAudio path ---
+    let ctx = getAudioContext();
+    if (!ctx) return resolve();
+
+    try { await ctx.resume(); } catch {}
+
+    const formats = ['wav', 'mp3'];
+    for (const fmt of formats) {
+      try {
+        const r = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice, format: fmt })
+        });
+        if (!r.ok) continue;
+
+        const ab = await r.arrayBuffer();
+        if (ab.byteLength < 64) continue;
+
+        const tryDecode = async (arrayBuf) => {
+          try {
+            return await ctx.decodeAudioData(arrayBuf.slice(0));
+          } catch {
+            ctx = createFreshContext();
+            if (!ctx) throw new Error('No audio context');
+            await ctx.resume().catch(() => {});
+            return await ctx.decodeAudioData(arrayBuf.slice(0));
+          }
+        };
+
+        const buffer = await tryDecode(ab);
+        stopCurrentSource();
+
+        const src = ctx.createBufferSource();
+        currentSrcRef.current = src;
+        src.buffer = buffer;
+        src.connect(gainRef.current);
+        src.onended = () => {
+          if (currentSrcRef.current === src) currentSrcRef.current = null;
+          resolve();
+        };
+
+        await ctx.resume().catch(() => {});
+        markStarted();          // animation flips on exactly when we start audio
+        src.start(0);
+        return;
+      } catch {
+        continue;
+      }
+    }
+    resolve();
+  }
+});
+
 
   const delayMs = (ms) => new Promise(r => setTimeout(r, ms))
 
@@ -520,28 +532,38 @@ function App() {
   }
 
   const startPlayback = async () => {
-    if (runningRef.current) return
-    const sequence = items.filter(it => (it.text || '').trim().length > 0)
-    if (sequence.length === 0) return
+    if (runningRef.current) return;
+    const sequence = items.filter(it => (it.text || '').trim().length > 0);
+    if (sequence.length === 0) return;
   
-    runningRef.current = true
-    cancelRef.current = false
+    runningRef.current = true;
+    cancelRef.current = false;
   
     try {
       for (const it of sequence) {
-        if (cancelRef.current) break
-        setTalking(true) 
-        await speakOnce(it.text)
-        setTalking(false) 
-        if (cancelRef.current) break
-        const waitMs = Math.max(0, Number(it.delay) * 1000 || 0)
-        if (waitMs > 0) await delayMs(waitMs)
+        if (cancelRef.current) break;
+  
+        // PRE-DELAY happens BEFORE speech
+        const waitMs = Math.max(0, Number(it.delay) * 1000 || 0);
+        if (waitMs > 0) {
+          await delayMs(waitMs);
+          if (cancelRef.current) break;
+        }
+  
+        // Turn pulse on when audio actually starts (onstart), off when playback ends
+        await speakOnce(it.text, {
+          onstart: () => setTalking(true)
+        });
+  
+        if (cancelRef.current) break;
+        setTalking(false);
       }
     } finally {
-      runningRef.current = false
-      setTalking(false)
+      runningRef.current = false;
+      setTalking(false);
     }
-  }
+  };
+  
 
   useEffect(() => {
     const onClick = async () => {

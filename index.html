@@ -2,21 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/miraappicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mira</title>
+    
+
+    <link rel="manifest" href="/manifest.json">
+  
+    <link rel="apple-touch-icon" href="/miraappicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/miraappicon.svg">
+    
+    <!-- iOS PWA settings -->
+    <meta name="theme-color" content="#FACF78">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mira">
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
 
-    <!-- Required for iOS standalone (A2HS) to render content under the status bar -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
-    <!-- (Optional) nicer status bar in Safari (not standalone) -->
-    <meta name="theme-color" content="#F7C490" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#F7C490" media="(prefers-color-scheme: dark)">
   </head>
   <body>
     <div id="root"></div>

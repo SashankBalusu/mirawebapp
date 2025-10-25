@@ -308,11 +308,7 @@ textarea:focus, .field-delay input:focus{
 .mode-wrap{
   padding: 4px 20px 8px 20px;
 }
-.mode-label{
-  color: var(--ink-40);
-  font-size: 12px;
-  margin-bottom: 8px;
-}
+
 .seg{
   display: grid;
   grid-auto-flow: column;

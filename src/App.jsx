@@ -226,9 +226,7 @@ function MenuSheet({ open, onClose, items, setItems, mode, setMode }) {
           <button className="sheet-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
-        {/* --- NEW: simple segmented control for mode --- */}
         <div className="mode-wrap">
-          <div className="mode-label">playback</div>
           <div className="seg">
             <button
               className={mode === 'auto' ? 'active' : ''}
@@ -247,8 +245,8 @@ function MenuSheet({ open, onClose, items, setItems, mode, setMode }) {
           </div>
           <div className="mode-hint">
             {mode === 'tap'
-              ? 'Each tap speaks the next step. Great for phones.'
-              : 'Mira auto-plays steps, waiting the “delay before (s)” you set.'}
+              ? 'Each tap speaks the next step. Optionally, add a delay to add a waiting period after you tap.'
+              : 'Mira auto-plays steps, waiting for the delay amount you set before each step.'}
           </div>
         </div>
 
@@ -277,7 +275,6 @@ function MenuSheet({ open, onClose, items, setItems, mode, setMode }) {
                     />
                   </label>
 
-                  {/* Text SECOND */}
                   <label className="field">
                     <div className="field-label">text</div>
                     <textarea
@@ -315,21 +312,18 @@ function App() {
 
   const [mode, setMode] = useState(() => {
     const saved = localStorage.getItem('playMode');
-    return saved === 'tap' ? 'tap' : 'auto'; // default auto
+    return saved === 'tap' ? 'tap' : 'auto'; 
   });
 
-  // Detect if we're in standalone PWA mode
   const isStandalone = useRef(
     window.navigator.standalone ||
     window.matchMedia('(display-mode: standalone)').matches
   );
 
-  // ---- WebAudio context management ----
   const audioCtxRef = useRef(null);
   const gainRef = useRef(null);
   const currentSrcRef = useRef(null);
   
-  // ---- HTML Audio pool for iOS PWA ----
   const audioPoolRef = useRef([]);
   const currentAudioRef = useRef(null);
 
@@ -371,7 +365,6 @@ function App() {
   }
 
   async function unlockAudioSystem() {
-    // Unlock HTML Audio (critical for iOS PWA)
     try {
       const a = new Audio('data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQAA');
       a.playsInline = true;
@@ -379,7 +372,6 @@ function App() {
       a.pause();
     } catch {}
 
-    // Unlock WebAudio
     const ctx = getAudioContext();
     if (ctx) {
       try {
@@ -430,8 +422,6 @@ function App() {
   const cancelRef = useRef(false)
   const runningRef = useRef(false)
 
-  // Use HTML Audio for iOS PWA, WebAudio for browser
-  // Use HTML Audio for iOS PWA, WebAudio for browser
 const speakOnce = (text, { voice = 'alloy', onstart } = {}) =>
 new Promise(async (resolve) => {
   let started = false;
@@ -443,7 +433,6 @@ new Promise(async (resolve) => {
   };
 
   if (isStandalone.current) {
-    // --- Standalone PWA: HTMLAudio path ---
     try {
       const formats = ['mp3', 'wav'];
       for (const fmt of formats) {
@@ -479,10 +468,9 @@ new Promise(async (resolve) => {
           audio.onerror = () => { cleanup(); resolve(); };
 
           try {
-            await audio.play();   // onplay will fire when it actually starts
-            return;               // success path handled via events
+            await audio.play();  
+            return;      
           } catch {
-            // try next format
             cleanup();
             continue;
           }
@@ -490,12 +478,11 @@ new Promise(async (resolve) => {
           continue;
         }
       }
-      resolve(); // all formats failed
+      resolve();
     } catch {
       resolve();
     }
   } else {
-    // --- Browser: WebAudio path ---
     let ctx = getAudioContext();
     if (!ctx) return resolve();
 
@@ -538,7 +525,7 @@ new Promise(async (resolve) => {
         };
 
         await ctx.resume().catch(() => {});
-        markStarted();          // animation flips on exactly when we start audio
+        markStarted(); 
         src.start(0);
         return;
       } catch {
@@ -580,14 +567,12 @@ new Promise(async (resolve) => {
       for (const it of sequence) {
         if (cancelRef.current) break;
   
-        // PRE-DELAY happens BEFORE speech
         const waitMs = Math.max(0, Number(it.delay) * 1000 || 0);
         if (waitMs > 0) {
           await delayMs(waitMs);
           if (cancelRef.current) break;
         }
   
-        // Turn pulse on when audio actually starts (onstart), off when playback ends
         await speakOnce(it.text, {
           onstart: () => setTalking(true)
         });
@@ -608,8 +593,6 @@ new Promise(async (resolve) => {
       await unlockAudioSystem();
   
       if (mode === 'tap') {
-        // In tap mode, each tap speaks exactly the next item.
-        // If it's currently speaking, do nothing (avoid cutting speech).
         if (talking || runningRef.current) return;
         runningRef.current = true;
         try {
@@ -620,7 +603,6 @@ new Promise(async (resolve) => {
         return;
       }
   
-      // Default: auto mode (toggle start/stop)
       if (talking || runningRef.current) {
         stopPlayback();
       } else {
@@ -632,7 +614,6 @@ new Promise(async (resolve) => {
     return () => document.removeEventListener('click', onClick);
   }, [menuOpen, talking, items, mode]);
 
-  // Aggressive unlock on first interaction
   useEffect(() => {
     const unlock = async () => {
       await unlockAudioSystem();
@@ -649,7 +630,6 @@ new Promise(async (resolve) => {
     };
   }, []);
   
-  // Re-unlock when returning to app
   useEffect(() => {
     const onVis = async () => {
       if (document.visibilityState === 'visible') {
@@ -660,7 +640,6 @@ new Promise(async (resolve) => {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
-  // Re-unlock on focus (iOS PWA)
   useEffect(() => {
     const onFocus = async () => {
       await unlockAudioSystem();
@@ -672,31 +651,26 @@ new Promise(async (resolve) => {
   const stopPropagation = (e) => e.stopPropagation()
   const tapIndexRef = useRef(0);
 
-  // Reset tap index when items change (so it starts at first step again)
   useEffect(() => {
     tapIndexRef.current = 0;
   }, [items]);
 
-  // --- ADD helper for "speak one step" ---
   const speakOneStep = async () => {
     const sequence = items.filter(it => (it.text || '').trim().length > 0);
     if (sequence.length === 0) return;
 
-    // wrap index
     if (tapIndexRef.current >= sequence.length) tapIndexRef.current = 0;
 
     const it = sequence[tapIndexRef.current];
 
-    // pre-delay
     const waitMs = Math.max(0, Number(it.delay) * 1000 || 0);
     if (waitMs > 0) await delayMs(waitMs);
 
-    // speak once
     setTalking(true);
     await speakOnce(it.text, { onstart: () => setTalking(true) });
     setTalking(false);
 
-    tapIndexRef.current += 1; // advance for next tap
+    tapIndexRef.current += 1; 
   };
 
   return (

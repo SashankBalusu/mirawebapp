@@ -181,6 +181,7 @@ function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
 }
 
 function MenuSheet({ open, onClose, items, setItems }) {
+  if (!open) return null;
   const sheetRef = useRef(null)
 
   useEffect(() => {
@@ -660,12 +661,14 @@ new Promise(async (resolve) => {
 
       {!talking && <div className="tap-to-talk">tap to talk</div>}
       
-      <MenuSheet
-        open={menuOpen}
-        onClose={closeMenuAndSuppressNextClick} 
-        items={items}
-        setItems={setItems}
-      />
+      {menuOpen && (
+        <MenuSheet
+          open={menuOpen}
+          onClose={closeMenuAndSuppressNextClick}
+          items={items}
+          setItems={setItems}
+        />
+      )}
     </>
   )
 }

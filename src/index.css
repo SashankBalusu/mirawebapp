@@ -304,3 +304,37 @@ textarea:focus, .field-delay input:focus{
   .sheet, .sheet-backdrop { transition: none; }
   .rect{ transform: none !important; }
 }
+
+.mode-wrap{
+  padding: 4px 20px 8px 20px;
+}
+.mode-label{
+  color: var(--ink-40);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.seg{
+  display: grid;
+  grid-auto-flow: column;
+  gap: 8px;
+  background: rgba(0,0,0,0.04);
+  padding: 6px;
+  border-radius: 10px;
+}
+.seg button{
+  border: 0;
+  background: transparent;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.seg button.active{
+  background: #111;
+  color: #fff;
+}
+.mode-hint{
+  color: var(--ink-40);
+  font-size: 12px;
+  margin-top: 8px;
+}

@@ -180,7 +180,7 @@ function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
   );
 }
 
-function MenuSheet({ open, onClose, items, setItems }) {
+function MenuSheet({ open, onClose, items, setItems, mode, setMode }) {
   if (!open) return null;
   const sheetRef = useRef(null)
 
@@ -214,20 +214,46 @@ function MenuSheet({ open, onClose, items, setItems }) {
     <>
       <div className={`sheet-backdrop ${open ? 'open' : ''}`} onClick={onClose} />
       <aside
-          className={`sheet ${open ? 'open' : ''}`}
-          ref={sheetRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Voice script"
-          onClick={(e) => e.stopPropagation()}  
-        >
+        className={`sheet ${open ? 'open' : ''}`}
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Voice script"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="sheet-header">
           <div className="sheet-title">voice script</div>
           <button className="sheet-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
+        {/* --- NEW: simple segmented control for mode --- */}
+        <div className="mode-wrap">
+          <div className="mode-label">playback</div>
+          <div className="seg">
+            <button
+              className={mode === 'auto' ? 'active' : ''}
+              onClick={() => setMode('auto')}
+              aria-pressed={mode === 'auto'}
+            >
+              auto (use delays)
+            </button>
+            <button
+              className={mode === 'tap' ? 'active' : ''}
+              onClick={() => setMode('tap')}
+              aria-pressed={mode === 'tap'}
+            >
+              tap to advance
+            </button>
+          </div>
+          <div className="mode-hint">
+            {mode === 'tap'
+              ? 'Each tap speaks the next step. Great for phones.'
+              : 'Mira auto-plays steps, waiting the “delay before (s)” you set.'}
+          </div>
+        </div>
+
         <div className="sheet-body">
-        {items.length === 0 && (
+          {items.length === 0 && (
             <div className="empty-hint">
               Add steps below. Each step <strong>waits the delay</strong>, then speaks your text.
             </div>
@@ -272,18 +298,25 @@ function MenuSheet({ open, onClose, items, setItems }) {
           </div>
 
           <div className="sheet-footer-hint">
-            Tap anywhere on the main page to start/stop playback.
+            {mode === 'tap'
+              ? 'Tap the main page to speak the next step.'
+              : 'Tap anywhere on the main page to start/stop playback.'}
           </div>
         </div>
       </aside>
     </>
-  )
+  );
 }
 
 function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [talking, setTalking] = useState(false)
   const suppressNextClickRef = useRef(false)
+
+  const [mode, setMode] = useState(() => {
+    const saved = localStorage.getItem('playMode');
+    return saved === 'tap' ? 'tap' : 'auto'; // default auto
+  });
 
   // Detect if we're in standalone PWA mode
   const isStandalone = useRef(
@@ -531,7 +564,10 @@ new Promise(async (resolve) => {
     suppressNextClickRef.current = true
     setTimeout(() => { suppressNextClickRef.current = false }, 250)
   }
-
+  useEffect(() => {
+    localStorage.setItem('playMode', mode);
+  }, [mode]);
+  
   const startPlayback = async () => {
     if (runningRef.current) return;
     const sequence = items.filter(it => (it.text || '').trim().length > 0);
@@ -570,17 +606,31 @@ new Promise(async (resolve) => {
     const onClick = async () => {
       if (menuOpen || suppressNextClickRef.current) return;
       await unlockAudioSystem();
-    
+  
+      if (mode === 'tap') {
+        // In tap mode, each tap speaks exactly the next item.
+        // If it's currently speaking, do nothing (avoid cutting speech).
+        if (talking || runningRef.current) return;
+        runningRef.current = true;
+        try {
+          await speakOneStep();
+        } finally {
+          runningRef.current = false;
+        }
+        return;
+      }
+  
+      // Default: auto mode (toggle start/stop)
       if (talking || runningRef.current) {
         stopPlayback();
       } else {
         startPlayback();
       }
     };
-    
+  
     document.addEventListener('click', onClick, { passive: true });
     return () => document.removeEventListener('click', onClick);
-  }, [menuOpen, talking, items]);
+  }, [menuOpen, talking, items, mode]);
 
   // Aggressive unlock on first interaction
   useEffect(() => {
@@ -620,6 +670,34 @@ new Promise(async (resolve) => {
   }, []);
 
   const stopPropagation = (e) => e.stopPropagation()
+  const tapIndexRef = useRef(0);
+
+  // Reset tap index when items change (so it starts at first step again)
+  useEffect(() => {
+    tapIndexRef.current = 0;
+  }, [items]);
+
+  // --- ADD helper for "speak one step" ---
+  const speakOneStep = async () => {
+    const sequence = items.filter(it => (it.text || '').trim().length > 0);
+    if (sequence.length === 0) return;
+
+    // wrap index
+    if (tapIndexRef.current >= sequence.length) tapIndexRef.current = 0;
+
+    const it = sequence[tapIndexRef.current];
+
+    // pre-delay
+    const waitMs = Math.max(0, Number(it.delay) * 1000 || 0);
+    if (waitMs > 0) await delayMs(waitMs);
+
+    // speak once
+    setTalking(true);
+    await speakOnce(it.text, { onstart: () => setTalking(true) });
+    setTalking(false);
+
+    tapIndexRef.current += 1; // advance for next tap
+  };
 
   return (
     <>
@@ -662,13 +740,15 @@ new Promise(async (resolve) => {
       {!talking && <div className="tap-to-talk">tap to talk</div>}
       
       {menuOpen && (
-        <MenuSheet
-          open={menuOpen}
-          onClose={closeMenuAndSuppressNextClick}
-          items={items}
-          setItems={setItems}
-        />
-      )}
+  <MenuSheet
+    open={menuOpen}
+    onClose={closeMenuAndSuppressNextClick}
+    items={items}
+    setItems={setItems}
+    mode={mode}
+    setMode={setMode}
+  />
+)}
     </>
   )
 }

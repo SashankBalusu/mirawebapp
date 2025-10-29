@@ -2,7 +2,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   try {
-    const { text, voice = 'alloy', format = 'mp3' } = req.body || {};
+    const { text, voice = 'alloy', format = 'mp3', speed = 1.0 } = req.body || {};
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'text required' });
     }
@@ -19,10 +19,11 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini-tts',  
+        model: 'gpt-4o-mini-tts',
         voice,
         input: text,
         format,
+        speed
       }),
     });
 

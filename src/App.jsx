@@ -180,7 +180,7 @@ function Diagnostics({ getAudioContext, unlockAudio, speakOnce }) {
   );
 }
 
-function MenuSheet({ open, onClose, items, setItems, mode, setMode }) {
+function MenuSheet({ open, onClose, items, setItems, mode, setMode, speed, setSpeed }) {
   if (!open) return null;
   const sheetRef = useRef(null)
 
@@ -249,6 +249,18 @@ function MenuSheet({ open, onClose, items, setItems, mode, setMode }) {
               : 'Mira auto-plays steps, waiting for the delay amount you set before each step.'}
           </div>
         </div>
+        <div className="speed-wrap" style={{ padding: '4px 20px 12px 20px' }}>
+          <div className="field-label">speech speed: {speed.toFixed(2)}×</div>
+          <input
+            type="range"
+            min="0.5"
+            max="2.0"
+            step="0.05"
+            value={speed}
+            onChange={e => setSpeed(Number(e.target.value))}
+            style={{ width: '100%' }}
+          />
+        </div>
 
         <div className="sheet-body">
           {items.length === 0 && (
@@ -309,6 +321,13 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [talking, setTalking] = useState(false)
   const suppressNextClickRef = useRef(false)
+  const [speed, setSpeed] = useState(() => {
+    const saved = localStorage.getItem('ttsSpeed');
+    return saved ? Number(saved) : 1.0;
+  });
+  useEffect(() => {
+    localStorage.setItem('ttsSpeed', speed);
+  }, [speed]);
 
   const [mode, setMode] = useState(() => {
     const saved = localStorage.getItem('playMode');
@@ -440,7 +459,7 @@ new Promise(async (resolve) => {
           const r = await fetch('/api/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, voice, format: fmt })
+            body: JSON.stringify({ text, voice, format: fmt, speed })
           });
           if (!r.ok) continue;
 
@@ -494,7 +513,7 @@ new Promise(async (resolve) => {
         const r = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice, format: fmt })
+          body: JSON.stringify({ text, voice, format: fmt, speed })
         });
         if (!r.ok) continue;
 
@@ -721,6 +740,8 @@ new Promise(async (resolve) => {
     setItems={setItems}
     mode={mode}
     setMode={setMode}
+    speed={speed}
+    setSpeed={setSpeed}
   />
 )}
     </>

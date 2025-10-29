@@ -334,3 +334,9 @@ textarea:focus, .field-delay input:focus{
   font-size: 12px;
   margin-top: 8px;
 }
+
+.speed-wrap .field-label {
+  color: var(--ink-40);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
